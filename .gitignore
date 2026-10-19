@@ -1,0 +1,13 @@
+**/bin/
+**/obj/
+artifacts/
+.vs/
+*.user
+*.suo
+*.log
+.env
+.env.*
+layout*.json
+receipts/
+validation/
+collected/
