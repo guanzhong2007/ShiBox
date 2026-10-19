@@ -2,6 +2,10 @@
 
 一个轻量的 Windows 桌面收纳组件：把常用文件夹和快捷方式收进黄色文件夹，滚动切换，双击用系统默认应用打开。
 
+![拾匣功能预览：文件夹收纳、就地展开与实时搜索](docs/images/shibox-preview.png)
+
+*按当前界面绘制的功能示意图，使用虚构示例数据，不包含私人桌面内容。*
+
 > **试用版 / Experimental**：这是独立的 C# / WPF 透明窗口程序，不是 Windows Explorer 原生图标、系统 Shell 扩展或 Wallpaper Engine 壁纸。请先用可恢复的普通文件试用。
 
 ## 功能
@@ -102,6 +106,14 @@ Get-Content .\artifacts\storage-check\result.json
 - `src/ShiBox/StorageCheck.cs`：隔离存储检查。
 
 仓库不包含个人收纳数据、迁移脚本、开发者配置、运行缓存或本机测试产物。
+
+## 生成说明配图
+
+配图绘制源码随仓库提供，无需图片服务或 API Key。在 Windows 上运行：
+
+```powershell
+dotnet run --project .\tools\PreviewArt\PreviewArt.csproj -c Release -- .\docs\images\shibox-preview.png
+```
 
 ## License
 
