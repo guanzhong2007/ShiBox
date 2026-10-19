@@ -17,14 +17,13 @@ public class State { public List<string> Paths {get;set;} = new(); public Dictio
 public class Box:Window {
  [DllImport("user32.dll")] static extern int GetSystemMetrics(int index);
  [DllImport("user32.dll")] static extern uint GetDpiForSystem();
- readonly string store=System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"ShiBox","layout.json");
+ readonly string store=System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),".ShiBox","layout.json");
  double cellX,cellY; Point? dragStart; double startLeft,startTop; bool moved;
  static readonly string collectionRoot=System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"拾匣收纳");
- readonly CollectionStorage storage=new(collectionRoot,new[]{Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory)}.Where(p=>!string.IsNullOrWhiteSpace(p)),System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"ShiBox","receipts"));
- State state=new(); Grid slot=new(); TextBlock currentName=new(); TextBox search=new(); Button expandButton=new(); Border searchAnchor=new(); Popup allPopup=new(), searchPopup=new(); StackPanel allRows=new(), searchRows=new();  bool busy; DateTime last=DateTime.MinValue;
+ readonly CollectionStorage storage=new(collectionRoot,new[]{Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory)}.Where(p=>!string.IsNullOrWhiteSpace(p)),System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),".ShiBox","receipts"));
+ State state=new(); StateStore stateStore=null!; bool userPositioned; Grid slot=new(); TextBlock currentName=new(); TextBox search=new(); Button expandButton=new(); Border searchAnchor=new(); Popup allPopup=new(), searchPopup=new(); StackPanel allRows=new(), searchRows=new();  bool busy; DateTime last=DateTime.MinValue;
  public Box(){
-  try { if(File.Exists(store))state=JsonSerializer.Deserialize<State>(File.ReadAllText(store))??new(); }catch{}
-  foreach(var receipt in storage.Recover()) {state.Paths.RemoveAll(p=>string.Equals(p,receipt.Original,StringComparison.OrdinalIgnoreCase));if(!state.Paths.Contains(receipt.Stored,StringComparer.OrdinalIgnoreCase))state.Paths.Add(receipt.Stored);state.Originals[receipt.Stored]=receipt.Original;}
+  stateStore=new StateStore(store,collectionRoot,storage);state=stateStore.Load();
   double dpi=Math.Max(96,GetDpiForSystem());Width=Math.Clamp(GetSystemMetrics(38)*96/dpi*2,136,192);Height=Math.Clamp(GetSystemMetrics(39)*96/dpi*2,174,210);Left=Math.Clamp(state.X,SystemParameters.VirtualScreenLeft,SystemParameters.VirtualScreenLeft+SystemParameters.VirtualScreenWidth-Width);Top=Math.Clamp(state.Y,SystemParameters.VirtualScreenTop,SystemParameters.VirtualScreenTop+SystemParameters.VirtualScreenHeight-Height);
   Title="拾匣 · 桌面收纳";WindowStyle=WindowStyle.None;ResizeMode=ResizeMode.NoResize;AllowsTransparency=true;Background=Brushes.Transparent;ShowInTaskbar=false;Topmost=false;AllowDrop=true;
   cellX=GetSystemMetrics(38)*96/dpi;cellY=GetSystemMetrics(39)*96/dpi;
@@ -41,19 +40,28 @@ public class Box:Window {
   allPopup=MakePopup(expandButton,PlacementMode.Left);searchPopup=MakePopup(searchBorder,PlacementMode.Bottom);
   search.GotKeyboardFocus+=(_,_)=>RefreshSearch();
   MouseLeftButtonDown+=(_,e)=>{if(IsControl(e.OriginalSource as DependencyObject))return;if(e.ClickCount==2){dragStart=null;ReleaseMouseCapture();Open();e.Handled=true;return;}allPopup.IsOpen=false;searchPopup.IsOpen=false;dragStart=CursorPoint();startLeft=Left;startTop=Top;moved=false;CaptureMouse();e.Handled=true;};
-  MouseMove+=(_,e)=>{if(dragStart is not Point origin||e.LeftButton!=MouseButtonState.Pressed)return;var now=CursorPoint();var factor=PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice??Matrix.Identity;var delta=factor.Transform(now-origin);if(!moved&&Math.Abs(delta.X)<5&&Math.Abs(delta.Y)<5)return;moved=true;Cursor=Cursors.SizeAll;Snap(startLeft+delta.X,startTop+delta.Y);};
+  MouseMove+=(_,e)=>{if(dragStart is not Point origin||e.LeftButton!=MouseButtonState.Pressed)return;var now=CursorPoint();var factor=PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice??Matrix.Identity;var delta=factor.Transform(now-origin);if(!moved&&Math.Abs(delta.X)<5&&Math.Abs(delta.Y)<5)return;moved=true;userPositioned=true;Cursor=Cursors.SizeAll;Snap(startLeft+delta.X,startTop+delta.Y);};
   MouseLeftButtonUp+=(_,e)=>{if(dragStart is Point origin){var now=CursorPoint();var factor=PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice??Matrix.Identity;var delta=factor.Transform(now-origin);dragStart=null;ReleaseMouseCapture();Cursor=Cursors.Arrow;Snap(moved?startLeft+delta.X:Left,moved?startTop+delta.Y:Top);Save();e.Handled=true;}};
   LostMouseCapture+=(_,_)=>{dragStart=null;Cursor=Cursors.Arrow;};
   MouseWheel+=(_,e)=>{e.Handled=true;if((DateTime.UtcNow-last).TotalMilliseconds<420)return;last=DateTime.UtcNow;Step(e.Delta<0?1:-1);};
   DragOver+=(_,e)=>{e.Effects=e.Data.GetDataPresent(DataFormats.FileDrop)?DragDropEffects.Move:DragDropEffects.None;e.Handled=true;};
   Drop+=(_,e)=>{if(busy){e.Handled=true;return;}if(e.Data.GetData(DataFormats.FileDrop) is string[] paths)Import(paths);e.Handled=true;};
   var menu=new ContextMenu();AddMenu(menu,"打开当前项目",Open);AddMenu(menu,"查看全部 / 搜索",ShowList);AddMenu(menu,"收纳已添加的桌面原件",()=>Import(state.Paths.ToArray()));AddMenu(menu,"放回原处并移出收纳（引用仅移除）",RemoveCurrent);AddMenu(menu,"打开收纳存储目录",()=>{Directory.CreateDirectory(collectionRoot);Process.Start(new ProcessStartInfo(collectionRoot){UseShellExecute=true});});AddMenu(menu,"退出拾匣",Close);ContextMenu=menu;
-  Closing+=(_,_)=>{allPopup.IsOpen=false;searchPopup.IsOpen=false;Save();};Loaded+=(_,_)=>{Snap(Left,Top);Save();};Render();
+  Closing+=(_,_)=>{allPopup.IsOpen=false;searchPopup.IsOpen=false;Save();};Loaded+=(_,_)=>{
+   LogStartup();
+   // Do not snap/save a transient login-time display geometry over the remembered position.
+   Microsoft.Win32.SystemEvents.DisplaySettingsChanged+=OnDisplayChanged;
+   var retry=new System.Windows.Threading.DispatcherTimer{Interval=TimeSpan.FromSeconds(2)};int attempts=0;
+   retry.Tick+=(_,_)=>{if(userPositioned||++attempts>8){retry.Stop();return;}var recovered=stateStore.Load();if(recovered.Paths.Count>state.Paths.Count){state=recovered;Render();}RestorePosition();};retry.Start();
+  };Closed+=(_,_)=>Microsoft.Win32.SystemEvents.DisplaySettingsChanged-=OnDisplayChanged;Render();
  }
  static SolidColorBrush Brush(string s)=>(SolidColorBrush)new BrushConverter().ConvertFromString(s)!;
  static TextBlock Text(string s,double size,string color)=>new(){Text=s,FontSize=size,Foreground=Brush(color),FontFamily=new FontFamily("Microsoft YaHei UI"),TextTrimming=TextTrimming.CharacterEllipsis};
  void AddMenu(ContextMenu m,string title,Action action){var item=new MenuItem{Header=title};item.Click+=(_,_)=>action();m.Items.Add(item);}
- void Save(){state.X=Left;state.Y=Top;try{Directory.CreateDirectory(System.IO.Path.GetDirectoryName(store)!);File.WriteAllText(store+".tmp",JsonSerializer.Serialize(state));File.Move(store+".tmp",store,true);}catch(Exception ex){MessageBox.Show("配置未保存："+ex.Message,"拾匣");}}
+ void Save(){if(userPositioned){state.X=Left;state.Y=Top;}try{stateStore.Save(state);}catch(Exception ex){MessageBox.Show("配置未保存："+ex.Message,"拾匣");}}
+ void RestorePosition(){if(userPositioned)return;var area=SystemParameters.WorkArea;if(state.X>=area.Left&&state.X+Width<=area.Right&&state.Y>=area.Top&&state.Y+Height<=area.Bottom){Left=state.X;Top=state.Y;}}
+ void OnDisplayChanged(object? sender,EventArgs args)=>Dispatcher.BeginInvoke(new Action(RestorePosition));
+ void LogStartup(){try{Directory.CreateDirectory(System.IO.Path.GetDirectoryName(store)!);File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(store)!,"startup-status.json"),JsonSerializer.Serialize(new{started=DateTimeOffset.Now,collectionRoot,config=store,items=state.Paths.Count,x=state.X,y=state.Y,warnings=stateStore.Warnings}));}catch{}}
  static bool IsControl(DependencyObject? d){while(d!=null){if(d is TextBox||d is Button||d is ScrollBar)return true;d=d is Visual?VisualTreeHelper.GetParent(d):null;}return false;}
  string DisplayName(string p)=>System.IO.Path.GetFileNameWithoutExtension(ItemName(p)).Length>0&&System.IO.Path.GetExtension(p).Equals(".lnk",StringComparison.OrdinalIgnoreCase)?System.IO.Path.GetFileNameWithoutExtension(ItemName(p)):ItemName(p);
  string ItemName(string p)=>System.IO.Path.GetFileName(p.TrimEnd('\\','/')) is {Length:>0} n?n:p;
@@ -148,5 +156,5 @@ public class Box:Window {
  }
  void ShowListContent(){allRows=new StackPanel();foreach(var path in state.Paths)AddRow(allRows,path,true);if(state.Paths.Count==0)allRows.Children.Add(Text("拖入桌面项目开始收纳",12,"#A8BAC7"));allPopup.Child=Panel("全部收纳",allRows,$"{state.Paths.Count} 项 · 点击打开，放回恢复桌面");}
  void ShowList(){if(busy)return;searchPopup.IsOpen=false;if(allPopup.IsOpen){allPopup.IsOpen=false;return;}ShowListContent();allPopup.IsOpen=true;}
- [STAThread] public static void Main(string[] args){if(args.Length==2&&args[0]=="--storage-check"){StorageCheck.Run(args[1]);return;}using var instanceMutex=new System.Threading.Mutex(true,"Local\\ShiBox.Desktop.Instance",out var created);if(!created)return;var app=new Application();app.Resources.MergedDictionaries.Add(new ResourceDictionary{Source=new Uri("/ShiBox;component/ScrollTheme.xaml",UriKind.Relative)});var box=new Box();if(args.Contains("--review"))box.ShowInTaskbar=true;app.Run(box);}
+ [STAThread] public static void Main(string[] args){if(args.Length==2&&args[0]=="--restart-check"){RestartCheck.Run(args[1]);return;}if(args.Length==2&&args[0]=="--storage-check"){StorageCheck.Run(args[1]);return;}using var instanceMutex=new System.Threading.Mutex(true,"Local\\ShiBox.Desktop.Instance",out var created);if(!created)return;var app=new Application();app.Resources.MergedDictionaries.Add(new ResourceDictionary{Source=new Uri("/ShiBox;component/ScrollTheme.xaml",UriKind.Relative)});var box=new Box();if(args.Contains("--review"))box.ShowInTaskbar=true;app.Run(box);}
 }
